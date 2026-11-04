@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/feschber/lan-mouse",
+  "tag": "v0.11.0",
+  "commit": "0d2190e787db9e482e17d4c16fb7c00ef4841bcb",
+  "original_sha256": "e846d9f27cdaea27dd353f2e5b785f9a4bc1f406cacd1bb38012cd90ba15c612",
+  "patched_sha256": "9cf270eee753bf716330774dfa690421880eb1327b431db650c199901e4ad1c2",
+  "license": "GPL-3.0-or-later"
+}

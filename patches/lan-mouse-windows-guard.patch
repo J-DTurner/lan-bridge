@@ -1,0 +1,41 @@
+--- a/input-capture/src/windows/event_thread.rs
++++ b/input-capture/src/windows/event_thread.rs
+@@ -305,6 +305,23 @@
+ }
+ 
+ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
++    // Lan Bridge replay must reach Windows apps without being captured again.
++    if ncode < 0 {
++        return CallNextHookEx(None, ncode, wparam, lparam);
++    }
++    let bridge_event = *(lparam.0 as *const MSLLHOOKSTRUCT);
++    if bridge_event.dwExtraInfo == 0x4C424749 {
++        // The next physical move starts at the replayed position, not the old
++        // barrier entry point. This avoids a jump when Windows is the sender.
++        if wparam.0 == WM_MOUSEMOVE as usize {
++            let point = (bridge_event.pt.x, bridge_event.pt.y);
++            PREV_POS.replace(Some(point));
++            if ACTIVE_CLIENT.get().is_some() {
++                ENTRY_POINT.replace(point);
++            }
++        }
++        return CallNextHookEx(None, ncode, wparam, lparam);
++    }
+     let active = check_client_activation(wparam, lparam);
+ 
+     /* no client was active */
+@@ -332,6 +349,9 @@
+ }
+ 
+ unsafe extern "system" fn kybrd_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
++    if ncode < 0 || (*(lparam.0 as *const KBDLLHOOKSTRUCT)).dwExtraInfo == 0x4C424749 {
++        return CallNextHookEx(None, ncode, wparam, lparam);
++    }
+     /* get active client if any */
+     let Some(client) = ACTIVE_CLIENT.get() else {
+         return CallNextHookEx(None, ncode, wparam, lparam);
+@@ -547,3 +567,4 @@
+         }
+     }
+ }
++

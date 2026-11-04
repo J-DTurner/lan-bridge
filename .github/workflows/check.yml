@@ -1,0 +1,40 @@
+name: Portable checks and Windows engine
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  checks:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Make Git OpenSSL available on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '"C:\Program Files\Git\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Append'
+      - run: python -m compileall -q lanbridge scripts
+      - run: python scripts/audit-public.py
+      - run: python -m unittest discover -s tests -v
+  windows-engine:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.13'
+      - run: rustup toolchain install stable --profile minimal
+      - run: python scripts/build-engine.py
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: lan-bridge-windows-input-engine
+          path: vendor/bin/

@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# One switch for sharing, the corrected keyboard, and desktop-login startup.
+set -euo pipefail
+
+fix_program="$HOME/.local/lib/lan-mouse-keyboard-fix.py"
+dropin_dir="$HOME/.config/systemd/user/lan-mouse.service.d"
+dropin_file="$dropin_dir/20-keyboard-correction.conf"
+startup_link="$HOME/.config/systemd/user/graphical-session.target.wants/lan-mouse.service"
+state_dir="$HOME/.local/state/lan-mouse"
+lock_file="$state_dir/keyboard-mode.lock"
+log_file="$state_dir/sharing-control.log"
+lan_mouse_binary=/usr/bin/lan-mouse
+user_id=$(id -u)
+
+log_command_failure() {
+  local result=$1 line=$2 failed_command=$3
+  printf '[%s] Failed (exit %s), line %s: %s\n' \
+    "$(date --iso-8601=seconds)" "$result" "$line" "$failed_command" >&2
+  exit "$result"
+}
+
+sharing_is_running() {
+  managed_running=false
+  if timeout 2 systemctl --user is-active --quiet lan-mouse.service 2>/dev/null; then
+    managed_running=true
+    return 0
+  fi
+  # Also recognize a daemon started manually by the settings application.
+  if pgrep -u "$user_id" -x lan-mouse >/dev/null 2>&1; then
+    timeout 1 "$lan_mouse_binary" cli list >/dev/null 2>&1
+    return $?
+  fi
+  return 1
+}
+
+close_lan_mouse() {
+  # Close GUI instances and independently launched daemons for this user.
+  local result=0
+  pkill -TERM -u "$user_id" -x lan-mouse || result=$?
+  if (( result > 1 )); then return "$result"; fi
+}
+
+print_bar_status() {
+  local enabled=false busy=false corrected=false autostart=false
+  local icon='󰌐' klass=inactive
+  local tooltip='Lan Mouse: OFF. Click to enable sharing with corrected Alt/Windows keys.'
+  if [[ -f "$lock_file" ]] && ! flock -n "$lock_file" true; then
+    busy=true
+    icon='⋯'
+    tooltip='Switching Lan Mouse sharing…'
+  elif sharing_is_running; then
+    enabled=true
+    icon='󰌌'
+    klass=active
+    tooltip='Lan Mouse: ON. Click to stop all mouse and keyboard sharing.'
+    if [[ $managed_running == true && -f "$dropin_file" ]]; then corrected=true; fi
+  fi
+  if [[ -e "$startup_link" ]]; then autostart=true; fi
+  printf '{"text":"%s","tooltip":"%s","class":"%s","enabled":%s,"busy":%s,"correction_enabled":%s,"autostart":%s}\n' \
+    "$icon" "$tooltip" "$klass" "$enabled" "$busy" "$corrected" "$autostart"
+}
+
+main() {
+  local mode=${1:-status}
+  local notify_errors=${2:-}
+  case "$mode" in
+    status)
+      if sharing_is_running; then
+        echo 'Lan Mouse: ON; mouse and keyboard sharing is running.'
+      else
+        echo 'Lan Mouse: OFF; mouse and keyboard sharing is stopped.'
+      fi
+      if [[ -e "$startup_link" ]]; then
+        echo 'Desktop-login startup: enabled.'
+      else
+        echo 'Desktop-login startup: disabled.'
+      fi
+      return 0
+      ;;
+    bar-status) print_bar_status; return 0 ;;
+    on|off|toggle) ;;
+    *)
+      echo 'Usage: lan-mouse-sharing on|off|toggle|status|bar-status [--notify]' >&2
+      return 2
+      ;;
+  esac
+
+  mkdir -p "$state_dir"
+  exec 9>"$lock_file"
+  if ! flock -n 9; then
+    echo 'A Lan Mouse change is already in progress.'
+    return 0
+  fi
+
+  # Mutating actions run outside lan-mouse.service, so their startup failures
+  # need their own log. Read-only sidebar polls never write this file.
+  touch "$log_file"
+  chmod 600 "$log_file"
+  printf '\n[%s] Requested action: %s\n' "$(date --iso-8601=seconds)" "$mode" >> "$log_file"
+  exec 2>>"$log_file"
+  set -E
+  trap 'log_command_failure "$?" "$LINENO" "$BASH_COMMAND"' ERR
+
+  if [[ $notify_errors == --notify ]]; then
+    trap 'result=$?; if (( result != 0 )); then notify-send -u normal "Lan Mouse" "Could not change sharing. Details: ~/.local/state/lan-mouse/sharing-control.log" || true; fi' EXIT
+  fi
+
+  if [[ $mode == toggle ]]; then
+    if sharing_is_running; then mode=off; else mode=on; fi
+  fi
+
+  if [[ $mode == off ]]; then
+    # Keep the correction and peer certificate ready for the next start.
+    systemctl --user disable --now lan-mouse.service
+    close_lan_mouse
+    for attempt in {1..10}; do
+      if ! sharing_is_running; then
+        echo 'Lan Mouse: OFF. Sharing and desktop-login startup are disabled.'
+        return 0
+      fi
+      sleep 0.2
+    done
+    echo 'Lan Mouse is still running; inspect the service log.' >&2
+    return 1
+  fi
+
+  # Every start enables the correction. Off never removes this override.
+  python3 "$fix_program" --self-test
+  python3 "$fix_program" --transport-test
+  mkdir -p "$dropin_dir"
+  cat > "$dropin_file" <<'UNIT'
+[Service]
+ExecStart=
+ExecStart=/usr/bin/python3 %h/.local/lib/lan-mouse-keyboard-fix.py
+UNIT
+
+  # An independent daemon must release the IPC socket before the service starts.
+  systemctl --user stop lan-mouse.service
+  close_lan_mouse
+  systemctl --user daemon-reload
+  # Off disables the service, allowing systemd to unload it. reset-failed
+  # rejects an unloaded unit, which is already clear of failures. Only reset
+  # a service that actually has a loaded failure state.
+  if systemctl --user is-failed --quiet lan-mouse.service; then
+    systemctl --user reset-failed lan-mouse.service
+  fi
+  systemctl --user enable lan-mouse.service
+  local ready=false
+  if systemctl --user restart lan-mouse.service; then
+    for attempt in {1..10}; do
+      if systemctl --user is-active --quiet lan-mouse.service &&
+          timeout 1 "$lan_mouse_binary" cli list >/dev/null 2>&1; then
+        ready=true
+        break
+      fi
+      sleep 0.5
+    done
+  fi
+  if [[ $ready != true ]]; then
+    echo 'Lan Mouse did not become ready. Recent messages:' >&2
+    journalctl --user -u lan-mouse.service -n 20 --no-pager >&2
+    systemctl --user disable --now lan-mouse.service || true
+    close_lan_mouse || true
+    return 1
+  fi
+  echo 'Lan Mouse: ON. Sharing, keyboard correction, and desktop-login startup are enabled.'
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi

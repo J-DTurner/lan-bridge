@@ -1,0 +1,19 @@
+[Unit]
+Description=Lan Bridge integrated Windows companion connection
+After=graphical-session.target lan-mouse.service
+Requires=lan-mouse.service
+BindsTo=graphical-session.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/lan-bridge daemon
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=12
+UMask=0077
+
+[Install]
+WantedBy=graphical-session.target

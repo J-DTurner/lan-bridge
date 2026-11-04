@@ -1,0 +1,4 @@
+# The Windows companion uses one environment; these are internal dependencies.
+mss==10.2.0
+Pillow==13.0.0
+SoundCard==0.4.6
