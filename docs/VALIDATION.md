@@ -52,3 +52,14 @@ exact source revision to deploy on both devices.
   Machine pairing exports, handoff archives, private development history, runtime data
   and actual device details are excluded. See docs/PUBLICATION.md for the audit rules.
 - Native Windows/desktop acceptance remains pending as described above.
+
+## Linux activation fixes — 2026-11-05
+
+- **52 portable tests passed** after fixing the Hyprland Lua require namespace and
+  Python viewer module discovery from service working directories.
+- The generated Lua module was compiled and loaded using a configuration-root search
+  path, registering two tiled, silent workspace rules. This verifies Lua module loading;
+  native Hyprland reload/config-error checks are still performed during activation.
+- Activation preserves a running input engine on first setup, repairs legacy module
+  blocks, reports service-bus errors clearly, and waits for fresh connection status
+  rather than reporting a stale previous run as connected.

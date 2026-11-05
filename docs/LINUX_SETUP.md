@@ -17,6 +17,11 @@ Staging installs a snapshot under `~/.local/share/lan-bridge/app`, launchers und
 It does **not** edit active Hyprland rules, the sidebar or current Lan Mouse startup.
 The `lan-bridge` and `lan-bridge-activate` commands work without a pip environment.
 
+The generated Lua block requires `hypr.lanbridge`, matching Omarchy's configuration
+root search path. Older `require("lanbridge")` blocks are replaced on activation.
+Viewer children use the installed application directory and an absolute config path,
+so starting the service from a home directory does not break Python module discovery.
+
 Run activation in the **native desktop terminal**:
 
 ```sh
@@ -34,6 +39,8 @@ startup. It then enables `lan-bridge.service` as the single login owner, with th
 existing corrected `lan-mouse.service` as its dependency. Off stops both. The existing
 sidebar path is reused to avoid Quickshell's cached-QML filename problem. A right-click
 opens the native control panel. Legacy keyboard/sharing aliases delegate to the suite.
+First activation starts the bridge without unnecessarily restarting an already-running
+input engine. The installer then reports the actual Windows feature connection status.
 
 The Windows companion must be installed for the extra channel to connect. Until then
 the existing keyboard/mouse engine can continue working and the panel reports waiting.

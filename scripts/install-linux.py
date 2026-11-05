@@ -9,17 +9,41 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 import tomllib
 
 SOURCE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE))
 from lanbridge.config import atomic_json, home_dir, state_dir, read_json, own_fingerprint
 
-MARKER = '\n-- BEGIN LAN BRIDGE\nrequire("lanbridge")\n-- END LAN BRIDGE\n'
+MARKER = '\n-- BEGIN LAN BRIDGE\nrequire("hypr.lanbridge")\n-- END LAN BRIDGE\n'
+LEGACY_MARKER = '\n-- BEGIN LAN BRIDGE\nrequire("lanbridge")\n-- END LAN BRIDGE\n'
+
+
+def add_hyprland_module(content):
+    # Omarchy's bootstrap searches ~/.config/?.lua; the module lives in hypr/.
+    for block in (MARKER, LEGACY_MARKER):
+        content = content.replace(block, "")
+    return content.rstrip() + "\n" + MARKER
 
 
 def command(*args, check=True):
-    return subprocess.run(args, capture_output=True, text=True, check=check, timeout=30)
+    result = subprocess.run(args, capture_output=True, text=True, check=False, timeout=30)
+    if check and result.returncode:
+        reason = result.stderr.strip() or f"exit status {result.returncode}"
+        raise RuntimeError(f"{' '.join(args)}: {reason}")
+    return result
+
+
+def wait_for_connection(since, timeout=15):
+    deadline = time.monotonic() + timeout
+    latest = None
+    while time.monotonic() < deadline:
+        latest = read_json(state_dir() / "status.json", {})
+        if latest.get("updated", 0) >= since and latest.get("connected"):
+            return latest
+        time.sleep(0.5)
+    return latest
 
 
 def stage(args):
@@ -77,6 +101,7 @@ def activate():
     history = []
     input_active = command("systemctl", "--user", "is-active", "--quiet", "lan-mouse.service", check=False).returncode == 0
     input_enabled = command("systemctl", "--user", "is-enabled", "--quiet", "lan-mouse.service", check=False).returncode == 0
+    bridge_active = command("systemctl", "--user", "is-active", "--quiet", "lan-bridge.service", check=False).returncode == 0
 
     def put(path, content, mode=0o644):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,8 +118,9 @@ def activate():
         main = home / ".config/hypr/hyprland.lua"
         content = main.read_text()
         put(home / ".config/hypr/lanbridge.lua", (SOURCE / "integrations/omarchy/lanbridge.lua").read_text())
-        if MARKER not in content:
-            put(main, content.rstrip() + "\n" + MARKER)
+        updated = add_hyprland_module(content)
+        if updated != content:
+            put(main, updated)
         command("hyprctl", "reload")
         errors = command("hyprctl", "configerrors").stdout.strip()
         if errors and errors.lower() != "ok":
@@ -114,15 +140,26 @@ def activate():
         command("systemctl", "--user", "disable", "lan-mouse.service")
         if command("systemctl", "--user", "is-failed", "--quiet", "lan-bridge.service", check=False).returncode == 0:
             command("systemctl", "--user", "reset-failed", "lan-bridge.service")
+        started = time.time()
         command("systemctl", "--user", "enable", "--now", "lan-bridge.service")
-        command("systemctl", "--user", "restart", "lan-bridge.service")
+        if bridge_active:
+            command("systemctl", "--user", "restart", "lan-bridge.service")
         command("systemctl", "--user", "is-active", "--quiet", "lan-bridge.service")
         command("systemctl", "--user", "is-active", "--quiet", "lan-mouse.service")
         put(sidebar, (SOURCE / "integrations/omarchy/LanMouseKeyboard.qml").read_text())
         put(home / ".local/bin/lan-mouse-sharing", '#!/usr/bin/env bash\nexec "$HOME/.local/bin/lan-bridge" "$@"\n', 0o755)
         atomic_json(state_dir() / "last-install.json", {"backup": str(backup)})
         print("Lan Bridge enabled. Left-click the existing sidebar switch for on/off; right-click for files/settings.")
-        print("The Windows companion must be installed before screens 6/7 and extra features connect.")
+        print("Checking the Windows feature connection…", flush=True)
+        status = wait_for_connection(started)
+        if status and status.get("connected"):
+            count = len(status.get("displays", []))
+            print(f"Windows feature connection: CONNECTED · {count} display(s).")
+            if status.get("blocked_workspaces"):
+                print("Remote views are waiting for occupied local workspaces to become free.")
+        else:
+            print("Service enabled; Windows feature connection is still waiting.")
+            print("Inspect ~/.local/state/lan-bridge/agent.log and lan-bridge status for details.")
         print(f"Rollback: python3 {SOURCE / 'scripts/rollback-linux.py'}")
     except BaseException:
         command("systemctl", "--user", "disable", "--now", "lan-bridge.service", check=False)

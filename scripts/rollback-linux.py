@@ -19,8 +19,11 @@ def main():
     for item in reversed(manifest["files"]):
         path = Path(item["path"])
         if path.name == "hyprland.lua":
-            marker = '\n-- BEGIN LAN BRIDGE\nrequire("lanbridge")\n-- END LAN BRIDGE\n'
-            path.write_text(path.read_text().replace(marker, "\n"))
+            content = path.read_text()
+            for module in ("hypr.lanbridge", "lanbridge"):
+                marker = f'\n-- BEGIN LAN BRIDGE\nrequire("{module}")\n-- END LAN BRIDGE\n'
+                content = content.replace(marker, "\n")
+            path.write_text(content)
         elif item["saved"]:
             shutil.copy2(item["saved"], path)
         else:

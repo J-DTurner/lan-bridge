@@ -1,6 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 from lanbridge import control
@@ -57,10 +59,23 @@ class WorkspaceLifecycleTests(unittest.TestCase):
     def test_repeated_heartbeat_does_not_duplicate_viewers(self):
         state = {"activeworkspace": {"id": 2}, "clients": []}
         with patch("lanbridge.workspaces.hypr_json", side_effect=lambda key: state[key]), \
-             patch("lanbridge.workspaces.subprocess.Popen", side_effect=lambda *_: Child()) as start:
+             patch("lanbridge.workspaces.subprocess.Popen", side_effect=lambda *a, **kw: Child()) as start:
             self.viewers.reconcile(self.displays)
             self.viewers.reconcile(self.displays)
         self.assertEqual(start.call_count, 2)
+
+    def test_viewer_package_resolves_when_daemon_was_started_outside_project(self):
+        state = {"activeworkspace": {"id": 2}, "clients": []}
+        with patch("lanbridge.workspaces.hypr_json", side_effect=lambda key: state[key]), \
+             patch("lanbridge.workspaces.subprocess.Popen", return_value=Child()) as start:
+            self.viewers.reconcile(self.displays[:1])
+        # Run the actual child module lookup without opening a graphical window.
+        cwd = start.call_args.kwargs["cwd"]
+        arguments = start.call_args.args[0]
+        self.assertTrue(Path(arguments[arguments.index("--config") + 1]).is_absolute())
+        result = subprocess.run([sys.executable, "-m", "lanbridge", "--version"],
+                                cwd=cwd, capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout.strip(), "0.1.0")
 
 
 class SharingControlTests(unittest.TestCase):

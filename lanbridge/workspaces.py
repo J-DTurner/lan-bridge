@@ -18,7 +18,7 @@ def occupied(clients, workspace):
 
 class Viewers:
     def __init__(self, config_path: Path, config):
-        self.config_path, self.config = config_path, config
+        self.config_path, self.config = Path(config_path).expanduser().resolve(), config
         self.children = {}
         self.last_local = 1
         self.blocked = []
@@ -53,7 +53,8 @@ class Viewers:
                 continue
             self.children[monitor] = subprocess.Popen([
                 sys.executable, "-m", "lanbridge", "--config", str(self.config_path),
-                "view", "--monitor", str(monitor)])
+                "view", "--monitor", str(monitor)],
+                cwd=Path(__file__).resolve().parents[1])
         for monitor in set(self.children) - set(wanted):
             self._stop(monitor)
 
