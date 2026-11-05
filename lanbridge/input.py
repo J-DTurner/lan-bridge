@@ -1,4 +1,4 @@
-"""Portable coordinate/key translation, independently testable off Windows."""
+"""Portable coordinate, key and scroll translation, testable off Windows."""
 from __future__ import annotations
 import math
 from .wire import ProtocolError
@@ -9,6 +9,42 @@ EXTENDED = {96: 0xE01C, 97: 0xE01D, 98: 0xE035, 99: 0xE037,
             105: 0xE04B, 106: 0xE04D, 107: 0xE04F, 108: 0xE050,
             109: 0xE051, 110: 0xE052, 111: 0xE053,
             125: 0xE05B, 126: 0xE05C, 127: 0xE05D}
+
+
+class ScrollNormalizer:
+    """Convert GTK surface pixels into the existing protocol's wheel clicks."""
+    def __init__(self, pixels_per_step=60):
+        if (type(pixels_per_step) not in (int, float) or
+            not math.isfinite(pixels_per_step) or not 1 <= pixels_per_step <= 10000):
+            raise ValueError("touchpad_scroll_pixels_per_step must be between 1 and 10000")
+        self.pixels_per_step = pixels_per_step
+        self.reset()
+
+    def reset(self):
+        self.remainder = [0., 0.]
+
+    def convert(self, dx, dy, *, surface):
+        if not all(type(value) in (int, float) and math.isfinite(value) for value in (dx, dy)):
+            raise ValueError("Scroll deltas must be finite numbers")
+        if not surface:
+            self.reset()
+            values = [max(-100, min(100, value)) for value in (dx, dy)]
+        else:
+            values = []
+            for axis, delta in enumerate((dx, dy)):
+                # Preserve movement below one native Windows wheel unit rather
+                # than rounding each small touchpad event away at the receiver.
+                limit = 100 * self.pixels_per_step
+                limited = max(-limit, min(limit, delta))
+                units = self.remainder[axis] + limited * (120 / self.pixels_per_step)
+                whole = math.trunc(units)
+                self.remainder[axis] = units - whole
+                # Keep the original protocol bounds and drop any excessive
+                # packet immediately, without retaining a scrolling backlog.
+                values.append(max(-12000, min(12000, whole)) / 120)
+        if not any(values):
+            return None
+        return {"kind": "scroll", "dx": values[0], "dy": values[1]}
 
 
 def windows_scancode(evdev: int) -> int | None:

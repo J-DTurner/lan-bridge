@@ -73,6 +73,11 @@ reads, active-video stall recovery and coalesced rendering without a permanent G
 timer. **Windows 0.1.0 and 0.1.1 remain protocol-compatible; a Windows update is not
 required for these client improvements.** See [docs/UPDATE_0_1_2.md](docs/UPDATE_0_1_2.md).
 
+Version 0.1.3 corrects Linux touchpad scrolling in the streamed views. GTK surface-pixel
+deltas are converted to wheel clicks before forwarding, instead of treating each
+pixel as a click. Ordinary wheel units are preserved. This is also compatible with
+older Windows companions; see [docs/UPDATE_0_1_3.md](docs/UPDATE_0_1_3.md).
+
 This backend can show game windows but is **not a validated low-latency gaming stream**.
 It has no hardware H.264/AV1 encoding, HDR, gamepad or raw relative mouse mode. Games,
 exclusive fullscreen, DRM-protected surfaces and anti-cheat can reject capture or

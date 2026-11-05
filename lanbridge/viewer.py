@@ -6,7 +6,7 @@ import threading
 import time
 import logging
 from .config import read_json, state_dir
-from .input import normalized_point
+from .input import normalized_point, ScrollNormalizer
 from .wire import Client
 from .display import DisplayStream, CoalescedCall
 
@@ -36,6 +36,7 @@ def run(config_path, config, monitor):
             self.has_frame = False
             self.last_decode_warning = 0
             self.decode_error = False
+            self.scroll_normalizer = ScrollNormalizer(config.get("touchpad_scroll_pixels_per_step", 60))
 
         def do_activate(self):
             self.window = Gtk.ApplicationWindow(application=self, title=f"Windows display {monitor} · Lan Bridge")
@@ -74,7 +75,9 @@ def run(config_path, config, monitor):
             keys.connect("key-released", self.key, False)
             self.window.add_controller(keys)
             scroll = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.BOTH_AXES)
-            scroll.connect("scroll", lambda _c, dx, dy: self.enqueue({"kind": "scroll", "dx": dx, "dy": dy}))
+            scroll.connect("scroll", self.scroll)
+            scroll.connect("scroll-begin", self.reset_scroll)
+            scroll.connect("scroll-end", self.reset_scroll)
             self.picture.add_controller(scroll)
             self.window.connect("notify::is-active", self.focus)
             self.window.connect("close-request", self.close_requested)
@@ -82,6 +85,20 @@ def run(config_path, config, monitor):
             self.picture.grab_focus()
             self.redraw = CoalescedCall(GLib.idle_add, self.render)
             threading.Thread(target=self.network, daemon=True).start()
+
+        def reset_scroll(self, *_):
+            with self.lock:
+                self.scroll_normalizer.reset()
+
+        def scroll(self, controller, dx, dy):
+            if not self.interactive or not self.window.is_active():
+                self.reset_scroll()
+                return False
+            with self.lock:
+                event = self.scroll_normalizer.convert(dx, dy, surface=controller.get_unit() == Gdk.ScrollUnit.SURFACE)
+            if event:
+                self.enqueue(event)
+            return True
 
         def motion(self, _controller, x, y):
             point = normalized_point(x, y, self.picture.get_width(), self.picture.get_height(), self.width, self.height)
@@ -132,6 +149,7 @@ def run(config_path, config, monitor):
             if not self.focused:
                 with self.lock:
                     self.point = None
+                    self.scroll_normalizer.reset()
                 while True:
                     try:
                         self.events.get_nowait()
@@ -165,6 +183,7 @@ def run(config_path, config, monitor):
             if state != "connected":
                 with self.lock:
                     self.point = None
+                    self.scroll_normalizer.reset()
                 while True:
                     try:
                         self.events.get_nowait()

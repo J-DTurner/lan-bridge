@@ -101,3 +101,19 @@ exact source revision to deploy on both devices.
 - Protocol remains 1. Windows server/capture/input behavior and private pairing/input
   settings are unchanged. Native client acceptance against the actual older Windows
   companion, GUI behavior and performance measurements remain pending deployment.
+
+## Linux remote touchpad scrolling — 0.1.3
+
+- **94 portable tests passed**, including 14 scroll cases. Package, scripts and tests
+  compiled, and Git whitespace checks passed. The installed GTK 4.24.1 exposes the
+  scroll-unit API used to distinguish surface pixels from wheel clicks.
+- The conversion defaults to 60 logical pixels per wheel click, preserves small
+  sub-unit movement and both axes/directions, keeps normal wheel events unchanged,
+  validates finite numbers, and bounds extreme input without retaining a backlog.
+- Tests exercise the actual viewer scroll callback with a stub GTK application,
+  including focus/view-only filtering and fraction resets on focus loss/reconnect.
+  Converted messages run through the unchanged Windows input handler and generate
+  the expected native wheel units. No Windows update or protocol change is required.
+- Actual two-finger scroll feel on the paired machines remains a native check after
+  deployment. Local desktop input configuration and pointer/click handling are outside
+  the scope of this application-only correction.

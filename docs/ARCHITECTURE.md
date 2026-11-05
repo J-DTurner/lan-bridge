@@ -71,6 +71,14 @@ codes become Windows Set-1 scancodes with extended-key flags. Input is released 
 focus loss, socket loss, lease expiry and shutdown. GTK keeps a single newest frame
 and a bounded input queue; obsolete pointer moves are coalesced.
 
+Linux distinguishes GTK surface-pixel scrolling from wheel-click scrolling using
+the controller's get_unit(). Surface movement defaults to 60 logical pixels per
+wheel click, retaining sub-unit fractions until they reach one native Windows wheel
+unit (1/120 of a click). Wheel units pass through directly within the existing
+protocol bounds. Fractions reset at gesture boundaries, focus loss and reconnect;
+unfocused/view-only views do not forward scrolling. Only the Linux viewer performs
+this conversion, using the existing scroll message supported by older companions.
+
 The Linux GUI schedules one coalesced GLib idle callback when a frame/status changes,
 replacing the permanent 33 ms render timer. Frame bursts replace the pending frame
 rather than queueing decodes; unfocused views retain the latest frame for their next
@@ -128,6 +136,9 @@ or prevent an explicit user sleep action.
 - [Microsoft SetThreadExecutionState](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setthreadexecutionstate)
 - [GLib idle callbacks and main-context dispatch](https://docs.gtk.org/glib/func.idle_add.html)
 - [Python TLS socket buffering and timeouts](https://docs.python.org/3/library/ssl.html#ssl.SSLSocket.pending)
+- [GTK surface pixels and wheel-click units](https://docs.gtk.org/gdk4/enum.ScrollUnit.html)
+- [GTK scroll-controller unit API](https://docs.gtk.org/gtk4/method.EventControllerScroll.get_unit.html)
+- [Windows wheel input units](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-mouseinput)
 - [MSS maintainer package](https://pypi.org/project/mss/), [Pillow](https://pypi.org/project/Pillow/), [SoundCard](https://pypi.org/project/SoundCard/)
 
 Current installed Omarchy helper/window/workspace sources were also inspected read-only;
