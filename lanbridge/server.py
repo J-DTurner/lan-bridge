@@ -8,12 +8,14 @@ import secrets
 import socket
 import threading
 import time
+from contextlib import suppress
 from . import PROTOCOL, __version__
 from .clipboard import Clip, ClipboardLink
 from .config import state_dir, atomic_json, read_json, load
 from .files import Store, confined, digest, send_file
 from .offers import Offers
 from .wire import Wire, ProtocolError, server_context, verify_peer
+from .display import serve_display
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +118,7 @@ class Server:
         wire = None
         try:
             raw.settimeout(10)
+            raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             sock = self.context.wrap_socket(raw, server_side=True)
             verify_peer(sock, self.config["peer_fingerprint"])
             wire = Wire(sock)
@@ -232,58 +235,29 @@ class Server:
                 raise ProtocolError("Display already has a viewer")
             self.active_displays.add(monitor_id)
         capture, inputs = None, None
-        closed = threading.Event()
-        activity = {"active": False}
         try:
             capture = self.screens.Capture(monitor_id, self.config.get("max_width", 1920))
             interactive = self.input_guard()
             inputs = self.screens.Input(capture.monitor, capture.virtual) if interactive else None
             wire.send({"display": monitor_id, "interactive": interactive, **capture.monitor})
 
-            def receive():
-                try:
-                    while not closed.is_set():
-                        event, extra = wire.recv()
-                        if closed.is_set():
-                            break
-                        self.sessions.check(request["session"])
-                        if extra:
-                            raise ProtocolError("Unexpected input payload")
-                        if event.get("kind") == "activity":
-                            activity["active"] = event.get("active") is True
-                            if not activity["active"] and inputs:
-                                inputs.release()
-                        elif inputs and activity["active"]:
-                            inputs.handle(event)
-                except Exception:
-                    closed.set()
-
-            thread = threading.Thread(target=receive, daemon=True)
-            thread.start()
-            interval = 1 / max(1, min(30, self.config.get("fps", 15)))
-            while not closed.is_set() and not self.stopped.is_set():
-                self.sessions.check(request["session"])
-                start = time.monotonic()
-                if activity["active"]:
-                    frame, width, height = capture.frame()
-                    wire.send({"kind": "frame", "width": width, "height": height}, frame)
-                else:
-                    wire.send({"kind": "idle"})
-                closed.wait(max(0.001, (interval if activity["active"] else 0.5) - (time.monotonic() - start)))
+            serve_display(wire, capture, inputs, lambda: self.sessions.check(request["session"]),
+                          self.stopped, self.config.get("fps", 15))
         finally:
-            closed.set()
             try:
-                wire.stream.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            if "thread" in locals():
-                thread.join(timeout=1)
-            if inputs:
-                inputs.release()
-            if capture:
-                capture.close()
-            with self.screen_lock:
-                self.active_displays.discard(monitor_id)
+                cleanup = [lambda: wire.stream.shutdown(socket.SHUT_RDWR)]
+                if inputs:
+                    cleanup.append(inputs.release)
+                if capture:
+                    cleanup.append(capture.close)
+                for operation in cleanup:
+                    try:
+                        operation()
+                    except Exception as exc:
+                        log.warning("Display cleanup continued after %s", type(exc).__name__)
+            finally:
+                with self.screen_lock:
+                    self.active_displays.discard(monitor_id)
 
     def handle_audio(self, wire, request):
         if not self.config.get("audio", False):

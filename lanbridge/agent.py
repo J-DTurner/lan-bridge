@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import threading
 import time
+from contextlib import suppress
 from . import __version__
 from .clipboard import Clip, ClipboardLink
 from .config import atomic_json, state_dir, load
@@ -37,11 +38,15 @@ class Agent:
         self.audio_player = None
         self.audio_retry = 0
         self.clipboard_error = None
+        self.connection_lost_at = None
+        self.reconnect_grace = 30
+        self.desktop_error = None
 
     def status(self, connected, **extra):
         atomic_json(self.state / "status.json", {"running": not self.stopped.is_set(),
                     "connected": connected, "updated": time.time(), "version": __version__,
-                    "transfer_error": self.transfer_error, "clipboard_error": self.clipboard_error, **extra})
+                    "transfer_error": self.transfer_error, "clipboard_error": self.clipboard_error,
+                    "desktop_error": self.desktop_error, "viewers": self.viewers.snapshot(), **extra})
 
     def run(self):
         threading.Thread(target=self.transfers, daemon=True).start()
@@ -58,19 +63,19 @@ class Agent:
                         atomic_json(self.state / "session.json", {"session": self.client.session})
                         self.connected.set()
                     caps, _ = self.client.call("heartbeat")
+                    self.connection_lost_at = None
                     self.exchange_clipboard(caps)
-                    self.viewers.reconcile(caps["displays"])
-                    self.update_audio(caps)
+                    self.update_desktop(caps)
                     self.status(True, interactive=caps.get("interactive", False),
                                 displays=caps["displays"], blocked_workspaces=self.viewers.blocked)
                     self.stopped.wait(0.7)
                 except Exception as exc:
                     log.warning("Connection unavailable: %s", type(exc).__name__)
                     self.connected.clear()
-                    self.viewers.stop()
+                    expired = self.expire_disconnected_views()
                     self.stop_audio()
-                    (self.state / "session.json").unlink(missing_ok=True)
-                    self.status(False, message="Waiting for the approved Windows companion on TCP 4242")
+                    self.status(False, recovering=not expired,
+                                message="Waiting for the approved Windows companion on TCP 4242")
                     self.stopped.wait(3)
         finally:
             self.connected.clear()
@@ -83,6 +88,25 @@ class Agent:
                 pass
             (self.state / "session.json").unlink(missing_ok=True)
             self.status(False)
+
+    def expire_disconnected_views(self, now=None):
+        now = time.monotonic() if now is None else now
+        if self.connection_lost_at is None:
+            self.connection_lost_at = now
+        if now - self.connection_lost_at < self.reconnect_grace:
+            return False
+        self.viewers.stop()
+        (self.state / "session.json").unlink(missing_ok=True)
+        return True
+
+    def update_desktop(self, caps):
+        self.desktop_error = None
+        try:
+            self.viewers.reconcile(caps["displays"])
+            self.update_audio(caps)
+        except Exception as exc:
+            self.desktop_error = type(exc).__name__
+            log.warning("Desktop integration will retry: %s", self.desktop_error)
 
     def exchange_clipboard(self, caps):
         if not self.config.get("clipboard", True) or not caps.get("clipboard"):
@@ -147,9 +171,11 @@ class Agent:
             if meta.get("format") != "s16le" or meta.get("rate") != 48000 or meta.get("channels") != 2:
                 return
             player = subprocess.Popen(["ffplay", "-nodisp", "-autoexit", "-loglevel", "error", "-f", "s16le",
-                                       "-ar", "48000", "-ch_layout", "stereo", "-i", "pipe:0"], stdin=subprocess.PIPE)
+                                       "-ar", "48000", "-ch_layout", "stereo", "-i", "pipe:0"], stdin=subprocess.PIPE, bufsize=0)
             self.audio_player = player
             while not stop.is_set() and not self.stopped.is_set():
+                if not wire.readable(0.2):
+                    continue
                 message, block = wire.recv()
                 if message.get("kind") != "audio" or len(block) > 38400:
                     break
@@ -162,6 +188,8 @@ class Agent:
             if wire:
                 wire.stream.close()
             if player:
+                with suppress(OSError):
+                    player.stdin.close()
                 player.terminate()
                 try:
                     player.wait(timeout=2)
@@ -173,13 +201,10 @@ class Agent:
 
     def stop_audio(self):
         self.audio_stop.set()
-        if self.audio_wire:
-            try:
-                self.audio_wire.stream.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-        if self.audio_player:
-            self.audio_player.terminate()
+        player = self.audio_player
+        if player:
+            with suppress(OSError):
+                player.terminate()
         if self.audio:
             self.audio.join(timeout=1)
             if not self.audio.is_alive():

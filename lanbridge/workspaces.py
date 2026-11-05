@@ -5,6 +5,9 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def hypr_json(command):
@@ -44,6 +47,7 @@ class Viewers:
             if child and child.poll() is None:
                 continue
             if child:
+                log.warning("Display %s viewer exited with code %s", monitor, child.poll())
                 del self.children[monitor]
                 self.retry_after[monitor] = time.monotonic() + 5
             if occupied(clients, workspace):
@@ -55,6 +59,7 @@ class Viewers:
                 sys.executable, "-m", "lanbridge", "--config", str(self.config_path),
                 "view", "--monitor", str(monitor)],
                 cwd=Path(__file__).resolve().parents[1])
+            log.info("Display %s viewer started on workspace %s", monitor, workspace)
         for monitor in set(self.children) - set(wanted):
             self._stop(monitor)
 
@@ -67,6 +72,11 @@ class Viewers:
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.wait()
+
+    def snapshot(self):
+        return {str(monitor): {"pid": getattr(child, "pid", None), "running": child.poll() is None,
+                               "workspace": self.config["workspaces"][monitor - 1]}
+                for monitor, child in self.children.items()}
 
     def stop(self):
         if self.children:

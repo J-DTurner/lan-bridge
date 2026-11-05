@@ -10,6 +10,7 @@ from lanbridge.workspaces import Viewers
 from lanbridge.agent import Agent
 from lanbridge.clipboard import ClipboardLink, Clip
 from lanbridge.wire import ProtocolError
+from lanbridge import __version__
 
 
 class Child:
@@ -75,7 +76,7 @@ class WorkspaceLifecycleTests(unittest.TestCase):
         self.assertTrue(Path(arguments[arguments.index("--config") + 1]).is_absolute())
         result = subprocess.run([sys.executable, "-m", "lanbridge", "--version"],
                                 cwd=cwd, capture_output=True, text=True, check=True)
-        self.assertEqual(result.stdout.strip(), "0.1.0")
+        self.assertEqual(result.stdout.strip(), __version__)
 
 
 class SharingControlTests(unittest.TestCase):

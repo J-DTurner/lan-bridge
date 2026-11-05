@@ -7,6 +7,7 @@ import struct
 import threading
 import os
 import tempfile
+import select
 from . import PROTOCOL
 from .config import certificate_pem, fingerprint, home_dir
 from pathlib import Path
@@ -43,10 +44,12 @@ class Wire:
         if len(data) > MAX_JSON or len(payload) > MAX_BINARY:
             raise ProtocolError("Frame exceeds limit")
         with self.lock:
-            self.stream.sendall(struct.pack("!II", len(data), len(payload)))
-            self.stream.sendall(data)
-            if payload:
-                self.stream.sendall(payload)
+            self.stream.sendall(struct.pack("!II", len(data), len(payload)) + data + payload)
+
+    def readable(self, timeout=0):
+        if getattr(self.stream, "pending", lambda: 0)():
+            return True
+        return bool(select.select([self.stream], [], [], timeout)[0])
 
     def recv(self) -> tuple[dict, bytes]:
         if self.authorize:
@@ -119,6 +122,8 @@ class Client:
 
     def connect(self, operation: str, **kwargs) -> Wire:
         raw = socket.create_connection((self.config["host"], self.config["port"]), timeout=5)
+        raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock = None
         try:
             sock = self.context.wrap_socket(raw, server_hostname="lan-bridge")
             sock.settimeout(120 if operation in ("manifest", "put", "get") else 12)
@@ -127,7 +132,7 @@ class Client:
             wire.send({"protocol": PROTOCOL, "op": operation, "session": self.session, **kwargs})
             return wire
         except BaseException:
-            raw.close()
+            (sock if sock is not None else raw).close()
             raise
 
     def call(self, operation: str, **kwargs):

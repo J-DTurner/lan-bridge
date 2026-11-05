@@ -52,5 +52,7 @@ audited local snapshot. The script contains no machine address or account consta
 the destination is provided at execution time.
 
 For subsequent development, use the public checkout and keep new commit metadata
-nonpersonal. Audit all reachable history before a normal explicit branch push.
+nonpersonal. Audit all reachable history before a normal explicit branch push, or use
+`scripts/publish-github.py --owner YOUR_GITHUB_LOGIN --update`. Update mode permits only
+a fast-forward from a remote ancestor already present in the audited public history.
 Keep private pairing/handoff distributions separate from public source updates.

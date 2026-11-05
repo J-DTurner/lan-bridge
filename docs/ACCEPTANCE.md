@@ -43,8 +43,10 @@ private clipboard text, input logs, personal screenshots or certificates with ke
 11. While holding a key/button, switch to a local workspace, close a view, disconnect
     the cable/Wi-Fi, or turn sharing off. Windows must release keys/buttons. Local
     input must remain usable; emergency Lan Mouse release is all four left modifiers.
-12. Disconnect: owned viewer windows close and empty 6/7 disappear after focus returns
-    to the last local workspace. Unrelated local apps never move or reappear. Reconnect
+12. Briefly interrupt the stream: its GTK window stays open with a reconnect indicator.
+    After a confirmed 30-second peer outage, owned views close and empty 6/7 disappear
+    after focus returns to the last local workspace. Sharing off closes them immediately.
+    Unrelated local apps never move or reappear. Reconnect
     creates only the two views; changing display resolution/hotplug should refresh them.
 13. Put a local test app in 6 before connecting: the app remains untouched and the
     panel reports the blocked remote workspace; 7 can still work. Remove it to permit

@@ -64,6 +64,13 @@ codes become Windows Set-1 scancodes with extended-key flags. Input is released 
 focus loss, socket loss, lease expiry and shutdown. GTK keeps a single newest frame
 and a bounded input queue; obsolete pointer moves are coalesced.
 
+Display capture, input processing and TLS reads/writes run on one owner thread per
+connection. Concurrent use of the same OpenSSL SSL object is unsafe; a separate reader
+and writer thread must not share it. Linux keeps its GTK window alive across stream
+failures and reconnects in place, while the control connection allows 30 seconds of
+recovery before closing owned views. Native input rejection is reported separately
+from video, and every cleanup path releases the monitor's connection slot.
+
 The physical Windows input may already be captured by Lan Mouse and forwarded to Linux.
 Replaying it from a remote view must not get captured and forwarded a second time.
 The pinned Windows hook patch passes events marked `0x4C424749` directly to Windows
@@ -85,6 +92,11 @@ and PCM stereo to Linux ffplay while a remote workspace is active and both sides
 audio. No microphone input is captured. This baseline is desktop streaming, with the
 gaming/performance limits documented in README.md.
 
+While a Windows display is actively being viewed, its capture thread temporarily
+requests display/system availability with SetThreadExecutionState. It clears that
+thread-scoped request on inactivity and shutdown; it does not change the power plan
+or prevent an explicit user sleep action.
+
 ## Sources checked for this implementation
 
 - [Lan Mouse pinned crypto/fingerprint implementation](https://github.com/feschber/lan-mouse/blob/0d2190e787db9e482e17d4c16fb7c00ef4841bcb/src/crypto.rs)
@@ -92,6 +104,8 @@ gaming/performance limits documented in README.md.
 - [Hyprland 0.56 Lua window rules](https://wiki.hypr.land/0.56.0/Configuring/Basics/Window-Rules/)
 - [Microsoft SendInput structures](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-input)
 - [Microsoft interactive scheduled-task logon type](https://learn.microsoft.com/en-us/windows/win32/taskschd/principal-logontype)
+- [OpenSSL object thread-safety requirements](https://docs.openssl.org/master/man7/openssl-threads/)
+- [Microsoft SetThreadExecutionState](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setthreadexecutionstate)
 - [MSS maintainer package](https://pypi.org/project/mss/), [Pillow](https://pypi.org/project/Pillow/), [SoundCard](https://pypi.org/project/SoundCard/)
 
 Current installed Omarchy helper/window/workspace sources were also inspected read-only;

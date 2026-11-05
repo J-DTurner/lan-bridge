@@ -63,3 +63,22 @@ exact source revision to deploy on both devices.
 - Activation preserves a running input engine on first setup, repairs legacy module
   blocks, reports service-bus errors clearly, and waits for fresh connection status
   rather than reporting a stale previous run as connected.
+
+## Stream recovery fixes — 0.1.1
+
+- **62 portable tests passed**. New coverage injects EOF and malformed frames, retries
+  a busy display, checks one TLS owner per connection, preserves windows during brief
+  control failures, expires them after a confirmed outage, isolates local desktop
+  errors and Windows input rejection, and verifies cleanup even when native release
+  operations fail. Thread-scoped Windows sleep-inhibition flags are checked with a
+  fake native API, including release on inactivity and capture cleanup.
+- The previous viewers silently quit on any stream exception, while a single failed
+  control check closed both viewer processes. The replacement logs safe error codes,
+  reconnects without quitting GTK, and adds a 30-second control recovery interval.
+- Shared TLS read/write threads were removed from the Linux display client and
+  Windows display server according to OpenSSL's object thread-safety requirements.
+- A live peer outage was observed on both the input and feature channels. Its cause
+  on Windows/the network is not established by the portable tests. This update does
+  not claim that unavailable Windows hardware can be reached or restarted remotely.
+- Native end-to-end validation after deploying 0.1.1 remains required. The agent's
+  isolated session cannot restart the desktop user service directly.

@@ -13,10 +13,10 @@ from . import PROTOCOL, __version__
 from .config import load, home_dir, state_dir, read_json, atomic_json, certificate_pem, own_fingerprint
 
 
-def logging_setup():
+def logging_setup(filename="agent.log"):
     state = state_dir()
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path = state / "agent.log"
+    path = state / filename
     handler = RotatingFileHandler(path, maxBytes=512 * 1024, backupCount=2, encoding="utf-8")
     if os.name != "nt":
         path.chmod(0o600)
@@ -68,6 +68,7 @@ def main(argv=None):
             from .panel import run
             run(args.config, config)
         elif args.command == "view":
+            logging_setup(f"display-{args.monitor}.log")
             from .viewer import run
             run(args.config, config, args.monitor)
         elif args.command == "doctor":

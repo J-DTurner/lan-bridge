@@ -6,7 +6,9 @@ sync of a dedicated Shared folder, and interactive views of two Windows displays
 
 **Windows display 1 opens as a normal tile on workspace 6; display 2 opens on 7.**
 The existing Super+6/Super+7 bindings and numbered sidebar entries work normally.
-Viewers are created while connected and closed on disconnect. Local workspaces and
+Viewers are created while connected. Brief connection failures reconnect inside the
+existing windows; a confirmed 30-second outage closes them. Turning sharing off closes
+them immediately. Local workspaces and
 apps are never hidden or minimized. Existing apps in 6/7 are left alone; their remote
 view waits until that workspace is free. Windows apps continue to run on Windows.
 
@@ -58,6 +60,12 @@ Windows system audio. Inactive views pause capture and audio stops outside the r
 workspaces. Input includes common keyboard keys, buttons and scroll, with letterbox/
 HiDPI/negative-monitor-coordinate handling. Super remains local; the viewer's Windows
 Start control sends a remote Windows-key tap.
+
+Version 0.1.1 fixes connection recovery and TLS socket ownership on both platforms.
+Each display connection has one I/O owner, input errors do not terminate video,
+and active viewing temporarily inhibits Windows idle sleep. No power-plan setting
+is changed, and idle-sleep inhibition is released when that view becomes inactive.
+See [docs/UPDATE_0_1_1.md](docs/UPDATE_0_1_1.md) for deploying the update to Windows.
 
 This backend can show game windows but is **not a validated low-latency gaming stream**.
 It has no hardware H.264/AV1 encoding, HDR, gamepad or raw relative mouse mode. Games,

@@ -37,6 +37,7 @@ def main():
     parser.add_argument("--name", default="lan-bridge")
     parser.add_argument("--private-rules", type=Path)
     parser.add_argument("--check-only", action="store_true")
+    parser.add_argument("--update", action="store_true", help="Fast-forward an already-audited public history")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9-]+", args.owner) or not re.fullmatch(r"[A-Za-z0-9_.-]+", args.name):
         parser.error("Invalid GitHub owner or repository name")
@@ -44,7 +45,7 @@ def main():
     auditor = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(auditor)
     forbidden = json.loads(args.private_rules.read_text())["forbidden_literals"] if args.private_rules else []
-    report = auditor.audit(ROOT, forbidden, snapshot=True)
+    report = auditor.audit(ROOT, forbidden, snapshot=not args.update)
     print(json.dumps(report, indent=2), flush=True)
     if not report["passed"]:
         raise SystemExit("Privacy audit failed; nothing has been published")
@@ -66,8 +67,14 @@ def main():
         if repo["private"]:
             raise SystemExit("An existing private repository has this name; its visibility was not changed")
         branches = api(f"repos/{destination}/branches?per_page=100") or []
-        if any(branch["name"] != "main" or branch["commit"]["sha"] != commit for branch in branches):
-            raise SystemExit("Existing repository has other history; refusing to publish over it")
+        for branch in branches:
+            if branch["name"] != "main":
+                raise SystemExit("Existing repository has other branches that need a separate audit")
+            old = branch["commit"]["sha"]
+            if old != commit:
+                ancestor = run("git", "merge-base", "--is-ancestor", old, commit, capture=True, check=False)
+                if not args.update or ancestor.returncode:
+                    raise SystemExit("Existing repository is not an audited ancestor; refusing to overwrite it")
         if api(f"repos/{destination}/tags?per_page=100"):
             raise SystemExit("Existing repository has tags that require a separate history audit")
     else:

@@ -56,6 +56,18 @@ class Capture:
         self.monitor = dict(self.capture.monitors[monitor_id])
         self.virtual = dict(self.capture.monitors[0])
         self.max_width = max(640, min(2560, int(max_width)))
+        self.power = C.WinDLL("kernel32", use_last_error=True)
+        self.power.SetThreadExecutionState.argtypes = [W.DWORD]
+        self.power.SetThreadExecutionState.restype = W.DWORD
+        self.active = False
+
+    def set_active(self, active):
+        if self.active == active:
+            return
+        # Thread-scoped and temporary: do not change the user's power plan.
+        if not self.power.SetThreadExecutionState(0x80000000 | (3 if active else 0)):
+            raise C.WinError(C.get_last_error())
+        self.active = active
 
     def frame(self):
         from PIL import Image
@@ -68,7 +80,10 @@ class Capture:
         return data.getvalue(), image.width, image.height
 
     def close(self):
-        self.capture.close()
+        try:
+            self.set_active(False)
+        finally:
+            self.capture.close()
 
 
 class Input:

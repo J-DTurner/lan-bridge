@@ -28,6 +28,8 @@ def summary():
         text += "\nA transfer or sync needs attention; see agent.log"
     if status.get("clipboard_error"):
         text += "\nClipboard temporarily unavailable; retrying"
+    if status.get("desktop_error"):
+        text += "\nDesktop integration needs attention; see agent.log"
     if status.get("blocked_workspaces"):
         text += "\nMove existing apps out of workspaces " + ", ".join(map(str, status["blocked_workspaces"]))
     return text

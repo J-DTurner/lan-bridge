@@ -4,9 +4,13 @@ from pathlib import Path
 import queue
 import threading
 import time
+import logging
 from .config import read_json, state_dir
 from .input import normalized_point
 from .wire import Client
+from .display import DisplayStream
+
+log = logging.getLogger(__name__)
 
 
 def run(config_path, config, monitor):
@@ -27,6 +31,11 @@ def run(config_path, config, monitor):
             self.interactive = False
             self.focused = False
             self.pressed_button = None
+            self.reset_stream = threading.Event()
+            self.message = "Connecting to Windows…"
+            self.has_frame = False
+            self.last_decode_warning = 0
+            self.decode_error = False
 
         def do_activate(self):
             self.window = Gtk.ApplicationWindow(application=self, title=f"Windows display {monitor} · Lan Bridge")
@@ -114,8 +123,8 @@ def run(config_path, config, monitor):
                 self.events.put_nowait(event)
                 return True
             except queue.Full:
-                # Disconnect forces the server to release every pressed key.
-                self.closed.set()
+                # Reconnect releases remote keys without removing the window.
+                self.reset_stream.set()
                 return False
 
         def focus(self, *_):
@@ -130,53 +139,52 @@ def run(config_path, config, monitor):
                         break
                 self.enqueue({"kind": "release"})
 
-        def writer(self):
-            previous, last = None, 0
-            try:
-                while not self.closed.wait(0.008):
-                    active = self.focused
-                    if active != previous or time.monotonic() - last > 1:
-                        self.wire.send({"kind": "activity", "active": active})
-                        previous, last = active, time.monotonic()
-                    while True:
-                        try:
-                            event = self.events.get_nowait()
-                        except queue.Empty:
-                            break
-                        if active or event["kind"] == "release":
-                            self.wire.send(event)
-                    with self.lock:
-                        point, self.point = self.point, None
-                    if active and point:
-                        self.wire.send(point)
-            except Exception:
-                self.closed.set()
+        def controls(self):
+            if self.reset_stream.is_set():
+                self.reset_stream.clear()
+                raise ConnectionResetError("Input queue recovery")
+            events = []
+            for _ in range(32):
+                try:
+                    events.append(self.events.get_nowait())
+                except queue.Empty:
+                    break
+            with self.lock:
+                point, self.point = self.point, None
+            return self.focused, events, point
+
+        def stream_state(self, state, metadata):
+            if state == "input_status":
+                with self.lock:
+                    self.message = "" if metadata.get("available") else "Windows is blocking remote input · Check elevated or secure windows"
+                return
+            self.interactive = state == "connected" and metadata.get("interactive", False)
+            if state != "connected":
+                with self.lock:
+                    self.point = None
+                while True:
+                    try:
+                        self.events.get_nowait()
+                    except queue.Empty:
+                        break
+            with self.lock:
+                self.message = ("" if self.interactive else "View only · Windows input guard needs installation") if state == "connected" else "Reconnecting to Windows…"
+
+        def frame(self, message, data):
+            with self.lock:
+                self.latest = (message, data)
 
         def network(self):
             try:
-                runtime = read_json(state_dir() / "session.json", {})
                 client = Client(config)
-                client.session = runtime.get("session")
-                self.wire = client.connect("display", monitor=monitor)
-                metadata, _ = self.wire.recv()
-                if "error" in metadata:
-                    raise ValueError(metadata["error"])
-                self.interactive = metadata.get("interactive", False)
-                threading.Thread(target=self.writer, daemon=True).start()
-                while not self.closed.is_set():
-                    message, data = self.wire.recv()
-                    if message.get("kind") == "frame":
-                        if not (1 <= message["width"] <= 8192 and 1 <= message["height"] <= 8192):
-                            raise ValueError("Invalid frame dimensions")
-                        with self.lock:
-                            self.latest = (message, data)
-            except Exception:
-                pass
-            finally:
-                self.closed.set()
-                if self.wire:
-                    self.wire.stream.close()
-                GLib.idle_add(self.quit)
+                def connect():
+                    runtime = read_json(state_dir() / "session.json", {})
+                    client.session = runtime.get("session")
+                    return client.connect("display", monitor=monitor)
+                DisplayStream(connect, self.controls, self.frame, self.stream_state, self.closed).run()
+            except Exception as exc:
+                log.error("Viewer startup failed: %s", type(exc).__name__)
+                self.stream_state("reconnecting", {})
 
         def render(self):
             if self.closed.is_set():
@@ -190,16 +198,23 @@ def run(config_path, config, monitor):
                     texture = Gdk.Texture.new_from_bytes(GLib.Bytes.new(data))
                     self.picture.set_paintable(texture)
                     self.width, self.height = message["width"], message["height"]
-                    self.label.set_visible(not self.interactive)
-                    self.label.set_label("View only · Windows input guard needs installation")
-                except GLib.Error:
-                    self.closed.set()
+                    self.has_frame = True
+                    self.decode_error = False
+                except GLib.Error as exc:
+                    self.decode_error = True
+                    if time.monotonic() - self.last_decode_warning > 5:
+                        log.warning("Video frame decode failed: %s", type(exc).__name__)
+                        self.last_decode_warning = time.monotonic()
+            with self.lock:
+                message = self.message
+            if not message and self.decode_error:
+                message = "Video decoder is retrying…"
+            self.label.set_visible(bool(message) or not self.has_frame)
+            self.label.set_label(message or "Waiting for Windows video…")
             return True
 
         def close_requested(self, *_):
             self.closed.set()
-            if self.wire:
-                self.wire.stream.close()
             self.quit()
             return False
 
