@@ -4,6 +4,7 @@ import tempfile
 import subprocess
 import sys
 import unittest
+import threading
 from unittest.mock import patch
 from lanbridge import control
 from lanbridge.workspaces import Viewers
@@ -134,6 +135,7 @@ class FeatureIsolationTests(unittest.TestCase):
         adapter = SimpleNamespace(read=lambda: clip, write=lambda value: None)
         agent = Agent.__new__(Agent)
         agent.config = {"clipboard": True}
+        agent.stopped = threading.Event()
         agent.clipboard = ClipboardLink(adapter)
         calls = []
         def call(op, **kwargs):

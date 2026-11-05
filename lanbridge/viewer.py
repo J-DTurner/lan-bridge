@@ -8,7 +8,7 @@ import logging
 from .config import read_json, state_dir
 from .input import normalized_point
 from .wire import Client
-from .display import DisplayStream
+from .display import DisplayStream, CoalescedCall
 
 log = logging.getLogger(__name__)
 
@@ -80,8 +80,8 @@ def run(config_path, config, monitor):
             self.window.connect("close-request", self.close_requested)
             self.window.present()
             self.picture.grab_focus()
+            self.redraw = CoalescedCall(GLib.idle_add, self.render)
             threading.Thread(target=self.network, daemon=True).start()
-            GLib.timeout_add(33, self.render)
 
         def motion(self, _controller, x, y):
             point = normalized_point(x, y, self.picture.get_width(), self.picture.get_height(), self.width, self.height)
@@ -138,6 +138,8 @@ def run(config_path, config, monitor):
                     except queue.Empty:
                         break
                 self.enqueue({"kind": "release"})
+            if hasattr(self, "redraw"):
+                self.redraw.request()
 
         def controls(self):
             if self.reset_stream.is_set():
@@ -157,6 +159,7 @@ def run(config_path, config, monitor):
             if state == "input_status":
                 with self.lock:
                     self.message = "" if metadata.get("available") else "Windows is blocking remote input · Check elevated or secure windows"
+                self.redraw.request()
                 return
             self.interactive = state == "connected" and metadata.get("interactive", False)
             if state != "connected":
@@ -168,11 +171,18 @@ def run(config_path, config, monitor):
                     except queue.Empty:
                         break
             with self.lock:
-                self.message = ("" if self.interactive else "View only · Windows input guard needs installation") if state == "connected" else "Reconnecting to Windows…"
+                message = (("" if self.interactive else "View only · Windows input guard needs installation") if state == "connected"
+                           else "Video stalled · Recovering…" if state == "stalled" else "Reconnecting to Windows…")
+                changed = self.message != message
+                self.message = message
+            if changed:
+                self.redraw.request()
 
         def frame(self, message, data):
             with self.lock:
                 self.latest = (message, data)
+            if self.focused:
+                self.redraw.request()
 
         def network(self):
             try:
@@ -180,7 +190,7 @@ def run(config_path, config, monitor):
                 def connect():
                     runtime = read_json(state_dir() / "session.json", {})
                     client.session = runtime.get("session")
-                    return client.connect("display", monitor=monitor)
+                    return client.connect("display", monitor=monitor, connect_timeout=3, timeout=3)
                 DisplayStream(connect, self.controls, self.frame, self.stream_state, self.closed).run()
             except Exception as exc:
                 log.error("Viewer startup failed: %s", type(exc).__name__)
@@ -191,7 +201,9 @@ def run(config_path, config, monitor):
                 self.quit()
                 return False
             with self.lock:
-                frame, self.latest = self.latest, None
+                frame = self.latest if self.focused else None
+                if frame:
+                    self.latest = None
             if frame:
                 message, data = frame
                 try:
@@ -211,7 +223,7 @@ def run(config_path, config, monitor):
                 message = "Video decoder is retrying…"
             self.label.set_visible(bool(message) or not self.has_frame)
             self.label.set_label(message or "Waiting for Windows video…")
-            return True
+            return False
 
         def close_requested(self, *_):
             self.closed.set()

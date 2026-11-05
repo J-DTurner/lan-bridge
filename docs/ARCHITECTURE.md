@@ -32,6 +32,13 @@ never pickle or executable code. TLS connections are independent for short RPCs,
 bulk transfer, each screen and optional audio; bulk files cannot block heartbeat/input.
 Per-peer listener concurrency is bounded. Each native connection has finite timeouts.
 
+The Linux heartbeat has a dedicated worker, separate from clipboard, transfers and
+Hyprland checks. Healthy renewals run every two seconds against the original
+20-second lease. Control connections use three-second connect/handshake and
+four-second socket timeouts. Transport failures retry the current session; only an
+explicit expired-session response permits a replacement hello. This avoids expiring
+or replacing healthy display sessions during an unrelated clipboard delay.
+
 Operation set: hello, heartbeat, disconnect; clipboard_get/set; manifest/delete;
 put/get for explicit Inbox, Shared or offer scopes; offers/offer_done; display; audio.
 There is no shell, arbitrary URL fetch, arbitrary path read or process-management RPC.
@@ -63,6 +70,19 @@ virtual-desktop bounds, including negative origins and different scaling. Common
 codes become Windows Set-1 scancodes with extended-key flags. Input is released on
 focus loss, socket loss, lease expiry and shutdown. GTK keeps a single newest frame
 and a bounded input queue; obsolete pointer moves are coalesced.
+
+The Linux GUI schedules one coalesced GLib idle callback when a frame/status changes,
+replacing the permanent 33 ms render timer. Frame bursts replace the pending frame
+rather than queueing decodes; unfocused views retain the latest frame for their next
+focus without decoding it. The active network loop polls at up to 60 Hz for input,
+while inactive views wait up to 250 ms between checks.
+
+Active views show recovery after three seconds without a frame and resend the existing
+activity message. Six seconds without video reconnects only that display; ten seconds
+without any packets also recovers an inactive connection. A whole framed message has
+a three-second read deadline, including partial headers/payloads. Identical image
+content still counts as a valid frame, and inactive views need only the original idle
+messages. These checks add no protocol fields or messages and work with older servers.
 
 Display capture, input processing and TLS reads/writes run on one owner thread per
 connection. Concurrent use of the same OpenSSL SSL object is unsafe; a separate reader
@@ -106,6 +126,8 @@ or prevent an explicit user sleep action.
 - [Microsoft interactive scheduled-task logon type](https://learn.microsoft.com/en-us/windows/win32/taskschd/principal-logontype)
 - [OpenSSL object thread-safety requirements](https://docs.openssl.org/master/man7/openssl-threads/)
 - [Microsoft SetThreadExecutionState](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setthreadexecutionstate)
+- [GLib idle callbacks and main-context dispatch](https://docs.gtk.org/glib/func.idle_add.html)
+- [Python TLS socket buffering and timeouts](https://docs.python.org/3/library/ssl.html#ssl.SSLSocket.pending)
 - [MSS maintainer package](https://pypi.org/project/mss/), [Pillow](https://pypi.org/project/Pillow/), [SoundCard](https://pypi.org/project/SoundCard/)
 
 Current installed Omarchy helper/window/workspace sources were also inspected read-only;

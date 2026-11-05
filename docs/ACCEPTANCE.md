@@ -1,7 +1,8 @@
 # Native acceptance — record actual results on both machines
 
 Portable tests do not prove native desktop behavior. Do these checks in ordinary
-logged-in desktop sessions, after installing the same source revision. Mark each
+logged-in desktop sessions, after installing compatible source revisions. Client-only
+0.1.2 can be tested with Windows 0.1.0 or 0.1.1. Mark each
 pass/fail/not-tested and keep the existing connection's backup ready. Do not collect
 private clipboard text, input logs, personal screenshots or certificates with keys.
 
@@ -97,3 +98,20 @@ private clipboard text, input logs, personal screenshots or certificates with ke
 Return source commit, exact test results, relevant diagnostics and unresolved failures
 in WINDOWS_RESULT.md. Do not mark native checks passed merely because installation,
 portable tests or a process launch succeeded.
+
+## Linux 0.1.2 with an older Windows companion
+
+1. Keep the existing Windows install unchanged. Check `peer_version` and both viewer
+   process IDs in Linux status, switch between 6/7 and local workspaces, and confirm
+   the same ordinary tiling/input behavior.
+2. Use a disposable clipboard item and temporarily make Windows clipboard access
+   busy. The independent heartbeat should remain connected while clipboard retries.
+3. Interrupt video while keeping control reachable. The viewer should show recovery
+   after three seconds, reconnect the individual display after six seconds, and retain
+   its process/window. A partial message must not block that worker indefinitely.
+4. Leave a static Windows desktop visible: repeated identical frames must not count
+   as a stall. Leave both views inactive: idle packets must not cause frame warnings.
+5. Confirm a brief transport failure retries the current session. An actual server
+   restart or expired lease must establish a new one and let existing views reconnect.
+6. Compare idle CPU/wakeups and visible responsiveness before/after on the actual
+   hardware. Portable scheduling tests establish bounded work, not measured savings.

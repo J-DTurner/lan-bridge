@@ -29,7 +29,7 @@ class FakeWire:
     def touch(self): self.owners.add(threading.get_ident())
     def close(self): self.touch(); self.closed = True
     def send(self, message, payload=b""): self.touch(); self.sent.append((message, payload))
-    def recv(self):
+    def recv(self, *, timeout=None):
         self.touch()
         item = self.packets.popleft()
         if isinstance(item, Exception): raise item
@@ -134,6 +134,8 @@ class ConnectionGraceTests(unittest.TestCase):
         self.agent.connection_lost_at = None
         self.agent.reconnect_grace = 30
         self.agent.viewers = SimpleNamespace(stop=Mock())
+        self.agent.session_lock = threading.Lock()
+        self.agent.connected = threading.Event()
         (self.agent.state / "session.json").write_text("{}")
     def tearDown(self): self.temp.cleanup()
 
@@ -148,6 +150,13 @@ class ConnectionGraceTests(unittest.TestCase):
         self.assertTrue(self.agent.expire_disconnected_views(131))
         self.agent.viewers.stop.assert_called_once()
         self.assertFalse((self.agent.state / "session.json").exists())
+
+    def test_recovery_before_expiry_preserves_recovered_session_and_windows(self):
+        self.agent.expire_disconnected_views(100)
+        self.agent.connected.set()
+        self.assertFalse(self.agent.expire_disconnected_views(131))
+        self.agent.viewers.stop.assert_not_called()
+        self.assertTrue((self.agent.state / "session.json").exists())
 
     def test_local_desktop_error_does_not_reset_peer_session(self):
         self.agent.viewers.reconcile = Mock(side_effect=RuntimeError("local desktop"))

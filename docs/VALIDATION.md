@@ -82,3 +82,22 @@ exact source revision to deploy on both devices.
   not claim that unavailable Windows hardware can be reached or restarted remotely.
 - Native end-to-end validation after deploying 0.1.1 remains required. The agent's
   isolated session cannot restart the desktop user service directly.
+
+## Linux client optimizations — 0.1.2
+
+- **80 portable tests passed**; package, scripts and tests compiled, and Git whitespace
+  checks passed. The additional client cases exercise the original Windows message
+  set and expired-session response, without requiring a server update.
+- An integration test blocks both the clipboard and desktop workers while the real
+  dedicated heartbeat worker continues renewing. Transport retries retain the current
+  session; an explicit expiry permits a new hello. Shutdown/expiry publication races
+  and a clipboard request unblocking after off are covered.
+- Stream tests cover quiet connections, idle packets without active video, a brief
+  stall recovering in place, a prolonged stall reconnecting, normal inactive streams
+  and repeated identical frames. A partial message is bounded by one read deadline.
+- Render scheduling tests coalesce 100 frame changes or concurrent requests into one
+  pending callback, and preserve a frame arriving during the current draw. These
+  establish bounded scheduling work, not a measured battery/CPU/latency improvement.
+- Protocol remains 1. Windows server/capture/input behavior and private pairing/input
+  settings are unchanged. Native client acceptance against the actual older Windows
+  companion, GUI behavior and performance measurements remain pending deployment.

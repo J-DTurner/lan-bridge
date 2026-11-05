@@ -8,6 +8,7 @@ import threading
 import os
 import tempfile
 import select
+import time
 from . import PROTOCOL
 from .config import certificate_pem, fingerprint, home_dir
 from pathlib import Path
@@ -21,9 +22,14 @@ class ProtocolError(ValueError):
     pass
 
 
-def read_exact(stream, size: int) -> bytes:
+def read_exact(stream, size: int, deadline=None) -> bytes:
     result = bytearray()
     while len(result) < size:
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Incomplete frame exceeded its deadline")
+            stream.settimeout(remaining)
         block = stream.recv(size - len(result))
         if not block:
             raise EOFError("Peer disconnected")
@@ -51,19 +57,28 @@ class Wire:
             return True
         return bool(select.select([self.stream], [], [], timeout)[0])
 
-    def recv(self) -> tuple[dict, bytes]:
+    def recv(self, *, timeout=None) -> tuple[dict, bytes]:
+        if timeout is None:
+            return self._recv()
+        previous = self.stream.gettimeout()
+        try:
+            return self._recv(time.monotonic() + timeout)
+        finally:
+            self.stream.settimeout(previous)
+
+    def _recv(self, deadline=None) -> tuple[dict, bytes]:
         if self.authorize:
             self.authorize()
-        header, binary = struct.unpack("!II", read_exact(self.stream, 8))
+        header, binary = struct.unpack("!II", read_exact(self.stream, 8, deadline))
         if not 2 <= header <= MAX_JSON or binary > MAX_BINARY:
             raise ProtocolError("Invalid frame length")
         try:
-            message = json.loads(read_exact(self.stream, header), parse_constant=lambda x: (_ for _ in ()).throw(ProtocolError("Non-finite number")))
+            message = json.loads(read_exact(self.stream, header, deadline), parse_constant=lambda x: (_ for _ in ()).throw(ProtocolError("Non-finite number")))
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise ProtocolError("Invalid JSON") from exc
         if not isinstance(message, dict):
             raise ProtocolError("Message must be an object")
-        payload = read_exact(self.stream, binary)
+        payload = read_exact(self.stream, binary, deadline)
         if self.authorize:
             self.authorize()
         return message, payload
@@ -120,13 +135,13 @@ class Client:
         self.context = client_context(config["identity"])
         self.session = None
 
-    def connect(self, operation: str, **kwargs) -> Wire:
-        raw = socket.create_connection((self.config["host"], self.config["port"]), timeout=5)
+    def connect(self, operation: str, *, connect_timeout=5, timeout=None, **kwargs) -> Wire:
+        raw = socket.create_connection((self.config["host"], self.config["port"]), timeout=connect_timeout)
         raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         sock = None
         try:
             sock = self.context.wrap_socket(raw, server_hostname="lan-bridge")
-            sock.settimeout(120 if operation in ("manifest", "put", "get") else 12)
+            sock.settimeout(timeout if timeout is not None else (120 if operation in ("manifest", "put", "get") else 12))
             verify_peer(sock, self.config["peer_fingerprint"])
             wire = Wire(sock)
             wire.send({"protocol": PROTOCOL, "op": operation, "session": self.session, **kwargs})

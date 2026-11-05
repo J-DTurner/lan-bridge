@@ -13,7 +13,7 @@ from .config import atomic_json, state_dir, load
 from .files import Store, push, pull
 from .offers import Offers
 from .sync import Synchronizer
-from .wire import Client
+from .wire import Client, ProtocolError
 from .workspaces import Viewers, hypr_json
 
 log = logging.getLogger(__name__)
@@ -41,53 +41,112 @@ class Agent:
         self.connection_lost_at = None
         self.reconnect_grace = 30
         self.desktop_error = None
+        self.capabilities = {}
+        self.connection_error = None
+        self.peer_version = None
+        self.session_lock = threading.Lock()
+        self.published_session = None
 
     def status(self, connected, **extra):
         atomic_json(self.state / "status.json", {"running": not self.stopped.is_set(),
                     "connected": connected, "updated": time.time(), "version": __version__,
                     "transfer_error": self.transfer_error, "clipboard_error": self.clipboard_error,
+                    "connection_error": self.connection_error, "peer_version": self.peer_version,
                     "desktop_error": self.desktop_error, "viewers": self.viewers.snapshot(), **extra})
 
     def run(self):
         threading.Thread(target=self.transfers, daemon=True).start()
+        threading.Thread(target=self.heartbeats, daemon=True).start()
+        threading.Thread(target=self.clipboards, daemon=True).start()
         try:
             while not self.stopped.is_set():
                 try:
                     settings = load(self.config_path)
                     for setting in ("clipboard", "sync", "audio"):
                         self.config[setting] = settings[setting]
-                    if not self.connected.is_set():
-                        hello, _ = self.client.call("hello")
-                        self.client.session = hello["session"]
-                        self.clipboard.seen = None
-                        atomic_json(self.state / "session.json", {"session": self.client.session})
-                        self.connected.set()
-                    caps, _ = self.client.call("heartbeat")
-                    self.connection_lost_at = None
-                    self.exchange_clipboard(caps)
-                    self.update_desktop(caps)
-                    self.status(True, interactive=caps.get("interactive", False),
-                                displays=caps["displays"], blocked_workspaces=self.viewers.blocked)
-                    self.stopped.wait(0.7)
+                    if self.connected.is_set():
+                        caps = self.capabilities
+                        self.connection_lost_at = None
+                        self.update_desktop(caps)
+                        self.status(True, interactive=caps.get("interactive", False),
+                                    displays=caps["displays"], blocked_workspaces=self.viewers.blocked)
+                    else:
+                        expired = self.expire_disconnected_views()
+                        self.stop_audio()
+                        self.status(False, recovering=not expired,
+                                    message="Waiting for the approved Windows companion on TCP 4242")
                 except Exception as exc:
-                    log.warning("Connection unavailable: %s", type(exc).__name__)
-                    self.connected.clear()
-                    expired = self.expire_disconnected_views()
-                    self.stop_audio()
-                    self.status(False, recovering=not expired,
-                                message="Waiting for the approved Windows companion on TCP 4242")
-                    self.stopped.wait(3)
+                    self.desktop_error = type(exc).__name__
+                    log.warning("Local integration will retry: %s", self.desktop_error)
+                    self.status(self.connected.is_set())
+                self.stopped.wait(1)
         finally:
+            self.stopped.set()
             self.connected.clear()
             self.viewers.stop()
             self.stop_audio()
             try:
                 if self.client.session:
-                    self.client.call("disconnect")
+                    self.client.call("disconnect", connect_timeout=1, timeout=1)
             except Exception:
                 pass
-            (self.state / "session.json").unlink(missing_ok=True)
+            with self.session_lock:
+                (self.state / "session.json").unlink(missing_ok=True)
+                self.published_session = None
             self.status(False)
+
+    def heartbeat(self):
+        # Only this worker creates/renews sessions. Clipboard, sync and Hyprland
+        # must never consume the older companion's 20-second heartbeat lease.
+        if self.client.session is None:
+            hello, _ = self.client.call("hello", connect_timeout=3, timeout=4)
+            with self.session_lock:
+                if self.stopped.is_set():
+                    raise InterruptedError("Sharing stopped")
+                self.client.session = hello["session"]
+                self.peer_version = hello.get("version")
+        try:
+            caps, _ = self.client.call("heartbeat", connect_timeout=3, timeout=4)
+            return caps
+        except ProtocolError as exc:
+            if str(exc) == "No active approved sharing session":
+                self.client.session = None
+            raise
+
+    def heartbeats(self):
+        while not self.stopped.is_set():
+            delay = 2
+            try:
+                caps = self.heartbeat()
+                with self.session_lock:
+                    if self.stopped.is_set():
+                        return
+                    if self.published_session != self.client.session:
+                        atomic_json(self.state / "session.json", {"session": self.client.session})
+                        self.published_session = self.client.session
+                    self.capabilities = caps
+                    self.connection_error = None
+                    self.connected.set()
+            except Exception as exc:
+                if self.stopped.is_set():
+                    return
+                self.connection_error = type(exc).__name__
+                log.warning("Connection unavailable: %s", self.connection_error)
+                self.connected.clear()
+                # Retry the existing token after transport errors. An extra
+                # hello would invalidate otherwise healthy display streams.
+                delay = 1
+            self.stopped.wait(delay)
+
+    def clipboards(self):
+        session = None
+        while not self.stopped.wait(1):
+            if not self.connected.is_set():
+                continue
+            if self.client.session != session:
+                session = self.client.session
+                self.clipboard.seen = None
+            self.exchange_clipboard(self.capabilities)
 
     def expire_disconnected_views(self, now=None):
         now = time.monotonic() if now is None else now
@@ -95,8 +154,15 @@ class Agent:
             self.connection_lost_at = now
         if now - self.connection_lost_at < self.reconnect_grace:
             return False
-        self.viewers.stop()
-        (self.state / "session.json").unlink(missing_ok=True)
+        with self.session_lock:
+            # Recovery may have completed after the GUI loop observed offline.
+            # Serialize expiry with publication of the recovered session.
+            if self.connected.is_set():
+                self.connection_lost_at = None
+                return False
+            self.viewers.stop()
+            (self.state / "session.json").unlink(missing_ok=True)
+            self.published_session = None
         return True
 
     def update_desktop(self, caps):
@@ -114,9 +180,15 @@ class Agent:
             return
         try:
             clip = self.clipboard.changed()
+            if self.stopped.is_set():
+                return
             if clip:
                 self.client.call("clipboard_set", clip=clip.message())
+            if self.stopped.is_set():
+                return
             reply, _ = self.client.call("clipboard_get", known=self.clipboard.seen)
+            if self.stopped.is_set():
+                return
             if reply.get("clip"):
                 self.clipboard.apply(Clip.parse(reply["clip"]))
             self.clipboard_error = None

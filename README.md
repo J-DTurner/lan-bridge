@@ -67,6 +67,12 @@ and active viewing temporarily inhibits Windows idle sleep. No power-plan settin
 is changed, and idle-sleep inhibition is released when that view becomes inactive.
 See [docs/UPDATE_0_1_1.md](docs/UPDATE_0_1_1.md) for deploying the update to Windows.
 
+Version 0.1.2 additionally improves the Linux client: independent heartbeat/clipboard
+workers, preservation of the current session after transport errors, bounded frame
+reads, active-video stall recovery and coalesced rendering without a permanent GUI
+timer. **Windows 0.1.0 and 0.1.1 remain protocol-compatible; a Windows update is not
+required for these client improvements.** See [docs/UPDATE_0_1_2.md](docs/UPDATE_0_1_2.md).
+
 This backend can show game windows but is **not a validated low-latency gaming stream**.
 It has no hardware H.264/AV1 encoding, HDR, gamepad or raw relative mouse mode. Games,
 exclusive fullscreen, DRM-protected surfaces and anti-cheat can reject capture or
@@ -87,8 +93,9 @@ python -m compileall -q lanbridge scripts
 
 The GitHub workflow supplies privacy checks, portable checks on Linux/Windows and a
 Windows engine build artifact. Consult the repository's Actions results for current
-CI status. Future updates must deploy the same compatible revision to
-both machines, then repeat `docs/ACCEPTANCE.md`. Private runtime files stay out of Git.
+CI status. Deploy Windows changes when a release requires them, and repeat the
+applicable checks in `docs/ACCEPTANCE.md`. Protocol-compatible client updates can be
+deployed independently. Private runtime files stay out of Git.
 
 Public source is published from a reviewed snapshot with neutral commit metadata;
 private development history and machine handoffs are not pushed. See

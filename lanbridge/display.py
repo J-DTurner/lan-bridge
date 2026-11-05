@@ -2,9 +2,35 @@
 from __future__ import annotations
 import logging
 import time
+import threading
 from .wire import ProtocolError
 
 log = logging.getLogger(__name__)
+
+
+class CoalescedCall:
+    """Schedule at most one pending GUI callback, even during a frame burst."""
+    def __init__(self, schedule, callback):
+        self.schedule, self.callback = schedule, callback
+        self.lock = threading.Lock()
+        self.pending = False
+
+    def request(self):
+        with self.lock:
+            if self.pending:
+                return
+            self.pending = True
+        self.schedule(self.dispatch)
+
+    def dispatch(self):
+        with self.lock:
+            self.pending = False
+        self.callback()
+        return False  # remove the GLib idle source; no permanent render timer
+
+
+class StreamStalled(TimeoutError):
+    reason = "FRAME_STALLED"
 
 
 def error_code(exc):
@@ -34,27 +60,47 @@ class DisplayStream:
             try:
                 self.on_state("connecting", {})
                 wire = self.connect()
-                metadata, extra = wire.recv()
+                metadata, extra = wire.recv(timeout=3)
                 if "error" in metadata:
                     raise rejected(metadata["error"])
                 if extra or "display" not in metadata:
                     raise ProtocolError("Display was not accepted")
                 self.on_state("connected", metadata)
                 previous, last_activity = None, 0
+                last_received = last_frame = self.clock()
+                stalled = False
                 while not self.stopped.is_set():
                     active, events, point = self.controls()
                     now = self.clock()
+                    if active != previous:
+                        last_frame = now
+                        if stalled:
+                            stalled = False
+                            self.on_state("connected", metadata)
                     if active != previous or now - last_activity >= 1:
                         wire.send({"kind": "activity", "active": active})
                         previous, last_activity = active, now
+                    if active and now - last_frame >= 6:
+                        raise StreamStalled("No video frames received")
+                    if active and now - last_frame >= 3 and not stalled:
+                        stalled = True
+                        self.on_state("stalled", {})
+                        # Both messages are supported by the original companion.
+                        wire.send({"kind": "release"})
+                        wire.send({"kind": "activity", "active": True})
+                    if now - last_received >= 10:
+                        raise TimeoutError("Display transport stopped responding")
+                    if stalled:
+                        events, point = [], None
                     for event in events:
                         if active or event.get("kind") == "release":
                             wire.send(event)
                     if active and point:
                         wire.send(point)
-                    if not wire.readable(0.008 if active else 0.2):
+                    if not wire.readable(0.016 if active else 0.25):
                         continue
-                    message, data = wire.recv()
+                    message, data = wire.recv(timeout=3)
+                    last_received = self.clock()
                     if "error" in message:
                         raise rejected(message["error"])
                     if message.get("kind") == "frame":
@@ -62,11 +108,17 @@ class DisplayStream:
                             not 1 <= message["width"] <= 8192 or not 1 <= message["height"] <= 8192 or not data):
                             raise ProtocolError("Invalid frame dimensions")
                         self.on_frame(message, data)
+                        last_frame = last_received
+                        if stalled:
+                            stalled = False
+                            self.on_state("connected", metadata)
                         backoff = 0.5
                     elif message.get("kind") == "input_status":
                         self.on_state("input_status", message)
                     elif message.get("kind") != "idle":
                         raise ProtocolError("Unknown display message")
+                    else:
+                        backoff = 0.5
             except Exception as exc:
                 if not self.stopped.is_set():
                     code = error_code(exc)
