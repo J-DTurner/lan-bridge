@@ -117,3 +117,22 @@ exact source revision to deploy on both devices.
 - Actual two-finger scroll feel on the paired machines remains a native check after
   deployment. Local desktop input configuration and pointer/click handling are outside
   the scope of this application-only correction.
+
+## Initial preview and focus recovery — 0.1.4
+
+- **99 portable tests passed**; package/scripts/tests compiled and Git whitespace
+  checks passed. Four new startup regression cases failed against 0.1.3 before the
+  correction, then passed after it. A fifth protects paused background decoding.
+- Tests verify initial preview requests without focus, first-frame redraw/decode,
+  recovery from a missed initial focus notification, background pause after the
+  preview, and suppression of unfocused keyboard/pointer input during that preview.
+  Existing inactive-stream tests now include the expected single initial preview.
+- The live 0.1.3 service was connected with two running viewers, but existing logs
+  did not distinguish idle streams, received frames and decoded frames. New logs
+  cover those stages using categories, dimensions and byte counts only.
+- The native GTK codec smoke check could not complete inside the restricted agent
+  namespace because its D-Bus-backed loader was denied access. Native window drawing,
+  JPEG decoding on the host and the user's actual blank-screen cause remain checks
+  to perform after deploying this revision; portable tests do not establish them.
+- Protocol remains 1 and no Windows deployment or desktop/input configuration change
+  is required for the Linux client correction.

@@ -1,3 +1,3 @@
 """Lan Bridge. No network activity occurs on import."""
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 PROTOCOL = 1

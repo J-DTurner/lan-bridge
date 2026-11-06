@@ -56,7 +56,8 @@ application-specific coordination before putting it there.
 ## Streaming scope
 
 The first backend sends JPEG desktop frames at up to 15 fps by default, with optional
-Windows system audio. Inactive views pause capture and audio stops outside the remote
+Windows system audio. Each connection requests an initial preview, then inactive
+views pause capture and audio stops outside the remote
 workspaces. Input includes common keyboard keys, buttons and scroll, with letterbox/
 HiDPI/negative-monitor-coordinate handling. Super remains local; the viewer's Windows
 Start control sends a remote Windows-key tap.
@@ -77,6 +78,11 @@ Version 0.1.3 corrects Linux touchpad scrolling in the streamed views. GTK surfa
 deltas are converted to wheel clicks before forwarding, instead of treating each
 pixel as a click. Ordinary wheel units are preserved. This is also compatible with
 older Windows companions; see [docs/UPDATE_0_1_3.md](docs/UPDATE_0_1_3.md).
+
+Version 0.1.4 fixes the connected-but-blank startup path: a new stream requests one
+preview without requiring keyboard focus, the viewer paints its first frame while
+unfocused, and startup/rendering synchronize the cached GTK focus state. Later
+background video remains paused. See [docs/UPDATE_0_1_4.md](docs/UPDATE_0_1_4.md).
 
 This backend can show game windows but is **not a validated low-latency gaming stream**.
 It has no hardware H.264/AV1 encoding, HDR, gamepad or raw relative mouse mode. Games,

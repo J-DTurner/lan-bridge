@@ -81,9 +81,11 @@ def run(config_path, config, monitor):
             self.picture.add_controller(scroll)
             self.window.connect("notify::is-active", self.focus)
             self.window.connect("close-request", self.close_requested)
+            self.redraw = CoalescedCall(GLib.idle_add, self.render)
             self.window.present()
             self.picture.grab_focus()
-            self.redraw = CoalescedCall(GLib.idle_add, self.render)
+            self.focus()
+            log.info("Viewer initialized; keyboard focused=%s", self.focused)
             threading.Thread(target=self.network, daemon=True).start()
 
         def reset_scroll(self, *_):
@@ -145,7 +147,10 @@ def run(config_path, config, monitor):
                 return False
 
         def focus(self, *_):
+            previous = self.focused
             self.focused = self.window.is_active()
+            if previous != self.focused:
+                log.info("Viewer keyboard focused=%s", self.focused)
             if not self.focused:
                 with self.lock:
                     self.point = None
@@ -200,7 +205,7 @@ def run(config_path, config, monitor):
         def frame(self, message, data):
             with self.lock:
                 self.latest = (message, data)
-            if self.focused:
+            if self.focused or not self.has_frame:
                 self.redraw.request()
 
         def network(self):
@@ -219,8 +224,10 @@ def run(config_path, config, monitor):
             if self.closed.is_set():
                 self.quit()
                 return False
+            if self.window.is_active() != self.focused:
+                self.focus()
             with self.lock:
-                frame = self.latest if self.focused else None
+                frame = self.latest if self.focused or not self.has_frame else None
                 if frame:
                     self.latest = None
             if frame:
@@ -229,6 +236,8 @@ def run(config_path, config, monitor):
                     texture = Gdk.Texture.new_from_bytes(GLib.Bytes.new(data))
                     self.picture.set_paintable(texture)
                     self.width, self.height = message["width"], message["height"]
+                    if not self.has_frame:
+                        log.info("First video frame decoded: %sx%s", self.width, self.height)
                     self.has_frame = True
                     self.decode_error = False
                 except GLib.Error as exc:

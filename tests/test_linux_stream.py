@@ -67,28 +67,30 @@ class ClientWatchdogTests(unittest.TestCase):
         self.assertNotIn("stalled", states)
         self.assertNotIn("reconnecting", states)
 
-    def test_inactive_original_idle_stream_does_not_require_video_frames(self):
+    def test_inactive_original_idle_stream_needs_no_more_frames_after_preview(self):
         stop, clock, states = Stop(), [0.], []
-        wire = FakeWire([META] + [({"kind": "idle"}, b"")] * 21)
+        wire = FakeWire([META, FRAME] + [({"kind": "idle"}, b"")] * 21)
+        received = []
         def controls():
             clock[0] += 1
             if clock[0] >= 20: stop.set()
             return False, [], None
-        DisplayStream(lambda: wire, controls, lambda *_: self.fail("Unexpected frame"),
+        DisplayStream(lambda: wire, controls, lambda *frame: received.append(frame),
                       lambda state, _: states.append(state), stop, clock=lambda: clock[0]).run()
+        self.assertEqual(len(received), 1)
         self.assertNotIn("stalled", states)
         self.assertNotIn("reconnecting", states)
 
     def test_completely_silent_inactive_stream_is_reconnected(self):
         stop, clock, states = Stop(), [0.], []
         class Silent(FakeWire):
-            def readable(self, timeout): return False
-        first = Silent([META])
+            def readable(self, timeout): return bool(self.packets)
+        first = Silent([META, FRAME])
         second = FakeWire([META, FRAME])
         wires = deque([first, second])
         def controls(): clock[0] += 2; return False, [], None
         with self.assertLogs("lanbridge.display", level="WARNING"):
-            DisplayStream(lambda: wires.popleft(), controls, lambda *_: stop.set(),
+            DisplayStream(lambda: wires.popleft(), controls, lambda *_: stop.set() if first.closed else None,
                           lambda state, _: states.append(state), stop, clock=lambda: clock[0]).run()
         self.assertIn("reconnecting", states)
         self.assertTrue(first.closed)

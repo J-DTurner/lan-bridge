@@ -81,8 +81,11 @@ this conversion, using the existing scroll message supported by older companions
 
 The Linux GUI schedules one coalesced GLib idle callback when a frame/status changes,
 replacing the permanent 33 ms render timer. Frame bursts replace the pending frame
-rather than queueing decodes; unfocused views retain the latest frame for their next
-focus without decoding it. The active network loop polls at up to 60 Hz for input,
+rather than queueing decodes. A new stream requests one preview independently of
+keyboard focus, and the GUI paints its first preview even while unfocused. Subsequent
+unfocused frames are retained for the next focus without decoding. Startup and drawing
+synchronize cached focus with Gtk.Window.is_active(), and video preview activity never
+permits unfocused input. The active network loop polls at up to 60 Hz for input,
 while inactive views wait up to 250 ms between checks.
 
 Active views show recovery after three seconds without a frame and resend the existing
@@ -115,7 +118,7 @@ viewer children close; if needed focus returns to the last local workspace so em
 6/7 can disappear. Occupied local workspaces are not stolen. There are no fullscreen,
 floating, shelf/minimize or persistent-workspace changes.
 
-Only the active viewer captures frames. Audio loopback uses SoundCard/Windows WASAPI
+After each initial preview, only the focused viewer requests ongoing capture. Audio loopback uses SoundCard/Windows WASAPI
 and PCM stereo to Linux ffplay while a remote workspace is active and both sides allow
 audio. No microphone input is captured. This baseline is desktop streaming, with the
 gaming/performance limits documented in README.md.
@@ -139,6 +142,7 @@ or prevent an explicit user sleep action.
 - [GTK surface pixels and wheel-click units](https://docs.gtk.org/gdk4/enum.ScrollUnit.html)
 - [GTK scroll-controller unit API](https://docs.gtk.org/gtk4/method.EventControllerScroll.get_unit.html)
 - [Windows wheel input units](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-mouseinput)
+- [GTK window activation state](https://docs.gtk.org/gtk4/method.Window.is_active.html)
 - [MSS maintainer package](https://pypi.org/project/mss/), [Pillow](https://pypi.org/project/Pillow/), [SoundCard](https://pypi.org/project/SoundCard/)
 
 Current installed Omarchy helper/window/workspace sources were also inspected read-only;

@@ -8,9 +8,9 @@ The current Lan Mouse input connection and Linux Alt/Windows correction must kee
 working. This handoff is implementation work, not an instruction to stop at research.
 
 Read AGENTS.md, README.md, docs/ARCHITECTURE.md and docs/ACCEPTANCE.md first.
-Linux 0.1.2 and 0.1.3 contain client-only improvements compatible with Windows 0.1.0
+Linux 0.1.2 through 0.1.4 contain client-only improvements compatible with Windows 0.1.0
 and 0.1.1. Existing Windows agents do not need to deploy or rebuild for those releases;
-see docs/UPDATE_0_1_2.md and docs/UPDATE_0_1_3.md. Preserve any local Windows fixes.
+see docs/UPDATE_0_1_2.md, docs/UPDATE_0_1_3.md and docs/UPDATE_0_1_4.md. Preserve any local Windows fixes.
 Obtain a **separate, private** `pairing.json` from the Linux installation. Pairing
 contains machine-specific certificates, fingerprints and LAN addresses. It is not
 included in the public repository and must never be committed or attached to an issue.

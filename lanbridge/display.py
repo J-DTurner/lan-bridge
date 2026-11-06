@@ -66,11 +66,16 @@ class DisplayStream:
                 if extra or "display" not in metadata:
                     raise ProtocolError("Display was not accepted")
                 self.on_state("connected", metadata)
+                log.info("Display stream connected")
                 previous, last_activity = None, 0
                 last_received = last_frame = self.clock()
                 stalled = False
+                preview_pending = True
                 while not self.stopped.is_set():
-                    active, events, point = self.controls()
+                    focused, events, point = self.controls()
+                    # Silent workspace creation need not grant keyboard focus.
+                    # Request one preview, then pause background video as before.
+                    active = focused or preview_pending
                     now = self.clock()
                     if active != previous:
                         last_frame = now
@@ -78,6 +83,8 @@ class DisplayStream:
                             stalled = False
                             self.on_state("connected", metadata)
                     if active != previous or now - last_activity >= 1:
+                        if active != previous:
+                            log.info("Display video active=%s; input focused=%s", active, focused)
                         wire.send({"kind": "activity", "active": active})
                         previous, last_activity = active, now
                     if active and now - last_frame >= 6:
@@ -93,9 +100,9 @@ class DisplayStream:
                     if stalled:
                         events, point = [], None
                     for event in events:
-                        if active or event.get("kind") == "release":
+                        if focused or event.get("kind") == "release":
                             wire.send(event)
-                    if active and point:
+                    if focused and point:
                         wire.send(point)
                     if not wire.readable(0.016 if active else 0.25):
                         continue
@@ -108,6 +115,10 @@ class DisplayStream:
                             not 1 <= message["width"] <= 8192 or not 1 <= message["height"] <= 8192 or not data):
                             raise ProtocolError("Invalid frame dimensions")
                         self.on_frame(message, data)
+                        if preview_pending:
+                            log.info("First video frame received: %sx%s, %s bytes",
+                                     message["width"], message["height"], len(data))
+                            preview_pending = False
                         last_frame = last_received
                         if stalled:
                             stalled = False
